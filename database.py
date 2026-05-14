@@ -15,7 +15,8 @@ def setup_database():
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS operations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        op_code TEXT UNIQUE NOT NULL,
+        guild_id TEXT NOT NULL,
+        op_code TEXT NOT NULL,
         name TEXT NOT NULL,
         op_type TEXT NOT NULL,
         location TEXT NOT NULL,
@@ -23,7 +24,8 @@ def setup_database():
         status TEXT NOT NULL,
         departure_time TEXT NOT NULL,
         created_by TEXT NOT NULL,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        UNIQUE(guild_id, op_code)
     )
     """)
 
@@ -50,19 +52,27 @@ def setup_database():
     )
     """)
 
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS guild_settings (
+        guild_id TEXT PRIMARY KEY,
+        dispatch_channel_id TEXT
+    )
+    """)
+
     conn.commit()
     conn.close()
 
 
-def create_operation(op_code, name, op_type, location, risk, departure_time, created_by):
+def create_operation(guild_id, op_code, name, op_type, location, risk, departure_time, created_by):
     conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute("""
     INSERT INTO operations
-    (op_code, name, op_type, location, risk, status, departure_time, created_by, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (guild_id, op_code, name, op_type, location, risk, status, departure_time, created_by, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
+        guild_id,
         op_code,
         name,
         op_type,
@@ -78,35 +88,33 @@ def create_operation(op_code, name, op_type, location, risk, departure_time, cre
     conn.close()
 
 
-def get_operation_by_code(op_code):
+def get_operation_by_code(guild_id, op_code):
     conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute("""
     SELECT *
     FROM operations
-    WHERE op_code = ?
-    """, (op_code.upper(),))
+    WHERE guild_id = ? AND op_code = ?
+    """, (guild_id, op_code.upper()))
 
     operation = cursor.fetchone()
-
     conn.close()
     return operation
 
 
-def get_active_operations():
+def get_active_operations(guild_id):
     conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute("""
     SELECT *
     FROM operations
-    WHERE status != 'CLOSED'
+    WHERE guild_id = ? AND status != 'CLOSED'
     ORDER BY created_at DESC
-    """)
+    """, (guild_id,))
 
     operations = cursor.fetchall()
-
     conn.close()
     return operations
 
@@ -132,6 +140,21 @@ def join_operation(operation_id, discord_id, discord_name, role):
     conn.close()
 
 
+def leave_operation(operation_id, discord_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    DELETE FROM participants
+    WHERE operation_id = ? AND discord_id = ?
+    """, (operation_id, discord_id))
+
+    deleted = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return deleted > 0
+
+
 def mark_ready(operation_id, discord_id):
     conn = get_connection()
     cursor = conn.cursor()
@@ -143,10 +166,8 @@ def mark_ready(operation_id, discord_id):
     """, (operation_id, discord_id))
 
     updated = cursor.rowcount
-
     conn.commit()
     conn.close()
-
     return updated > 0
 
 
@@ -162,7 +183,6 @@ def get_participants(operation_id):
     """, (operation_id,))
 
     participants = cursor.fetchall()
-
     conn.close()
     return participants
 
@@ -198,3 +218,36 @@ def close_operation(operation_id):
 
     conn.commit()
     conn.close()
+
+
+def set_dispatch_channel(guild_id, channel_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    INSERT OR REPLACE INTO guild_settings
+    (guild_id, dispatch_channel_id)
+    VALUES (?, ?)
+    """, (guild_id, channel_id))
+
+    conn.commit()
+    conn.close()
+
+
+def get_dispatch_channel(guild_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    SELECT dispatch_channel_id
+    FROM guild_settings
+    WHERE guild_id = ?
+    """, (guild_id,))
+
+    result = cursor.fetchone()
+    conn.close()
+
+    if result:
+        return result[0]
+
+    return None
