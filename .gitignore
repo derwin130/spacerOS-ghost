@@ -1,0 +1,4 @@
+.env
+.venv/
+ghost.db
+__pycache__/
